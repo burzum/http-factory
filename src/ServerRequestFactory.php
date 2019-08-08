@@ -34,7 +34,8 @@ SOFTWARE.
 namespace Tuupola\Http\Factory;
 
 use GuzzleHttp\Psr7\ServerRequest as GuzzleServerRequest;
-use Nyholm\Psr7\ServerRequest as NyholmServerRequest;
+use Nyholm\Psr7\Psr17Factory as NyholmFactory;
+use Nyholm\Psr7Server\ServerRequestCreator as NyholmServerRequestCreator;
 use Slim\Http\Request as SlimServerRequest;
 use Slim\Http\Uri as SlimUri;
 use Slim\Http\Headers as SlimHeaders;
@@ -55,8 +56,12 @@ final class ServerRequestFactory implements ServerRequestFactoryInterface
             return new DiactorosServerRequest($serverParams, [], $uri, $method);
         }
 
+        if (class_exists(NyholmServerRequestCreator::class)) {
+            return $this->nyholm();
+        }
+
         if (class_exists(NyholmServerRequest::class)) {
-            return new NyholmServerRequest($method, $uri, [], null, "1.1", $serverParams);
+            return new NyholmServerRequest($method, $uri, getallheaders(), \fopen("php://input", 'r+'), "1.1", $serverParams);
         }
 
         if (class_exists(SlimPsr7ServerRequestFactory::class)) {
@@ -64,16 +69,44 @@ final class ServerRequestFactory implements ServerRequestFactoryInterface
         }
 
         if (class_exists(SlimServerRequest::class)) {
-            $uri = SlimUri::createFromString($uri);
-            $headers = new SlimHeaders;
-            $body = (new StreamFactory)->createStream("");
-            return new SlimServerRequest($method, $uri, $headers, [], $serverParams, $body);
+            return $this->slim($method, $uri, $serverParams);
         }
 
         if (class_exists(GuzzleServerRequest::class)) {
-            return new GuzzleServerRequest($method, $uri, [], null, "1.1", $serverParams);
+            return new GuzzleServerRequest::fromGlobals();
         }
 
         throw new \RuntimeException("No PSR-7 implementation available");
+    }
+
+    /**
+     *
+     */
+    protected function slim(string $method, $uri, array $serverParams = [])
+    {
+        $uri = SlimUri::createFromString($uri);
+        $headers = new SlimHeaders;
+        $body = (new StreamFactory)->createStream("");
+
+        return new SlimServerRequest($method, $uri, $headers, [], $serverParams, $body);
+    }
+
+    /**
+     * Creates a Nyholm server request
+     *
+     * @return \Psr\Http\Message\ServerRequestInterface
+     */
+    protected function nyholm(): ServerRequestInterface
+    {
+        // See https://github.com/Nyholm/psr7#create-server-requests
+        $factory = new NyholmFactory();
+        $creator = new NyholmServerRequestCreator(
+            $factory, // ServerRequestFactory
+            $factory, // UriFactory
+            $factory, // UploadedFileFactory
+            $factory  // StreamFactory
+        );
+
+        return $creator->fromGlobals();
     }
 }
